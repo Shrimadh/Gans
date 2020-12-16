@@ -12,11 +12,12 @@ import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def show_tensor_images(image_tensor, num_images=25, size=(1, 28, 28)):
+def get_tensor_images(image_tensor, num_images=20, size=(1, 28, 28)):
     image_unflat = image_tensor.detach().cpu().view(-1, *size)
     image_grid = make_grid(image_unflat[:num_images], nrow=5)
-    plt.imshow(image_grid.permute(1, 2, 0).squeeze())
-    plt.show()
+    # plt.imshow(image_grid.permute(1, 2, 0).squeeze())
+    # plt.show()
+    return image_grid
 
 def gen_block(dim1,dim2):
     return nn.Sequential(
@@ -83,7 +84,7 @@ class Discriminator(nn.Module):
 
 criterion = nn.BCEWithLogitsLoss()
 lr = 0.00001
-n_epochs = 200
+n_epochs = 380
 noise_dim = 64
 batch_size = 128
 mnist = datasets.MNIST(root='./data', train=False, download=True, transform=transforms.ToTensor())
@@ -96,6 +97,16 @@ disc_optim = optim.Adam(disc.parameters(),lr = lr)
 
 writer_fake = SummaryWriter(f"runs/MNIST/fake")
 writer_real = SummaryWriter(f"runs/MNIST/real")
+
+gen_checkpoint = {'state_dict': gen.state_dict(),'optimizer' : gen_optim.state_dict()}
+disc_checkpoint = {'state_dict': disc.state_dict(),'optimizer' : disc_optim.state_dict()}
+
+def save_checkpoint(acc,checkpoint,path,mini):
+    if acc < mini:
+        mini = acc
+        torch.save(checkpoint,path)
+
+mini = 100     
 #Training part
 
 cur_step = 0
@@ -123,12 +134,15 @@ for epoch in range(n_epochs):
         mean_discriminator_loss += disc_loss.item() / 500
         mean_generator_loss += gen_loss.item() / 500
 
+        save_checkpoint(mean_generator_loss,gen_checkpoint,"generator.pth",mini)
+        save_checkpoint(mean_generator_loss,disc_checkpoint,"discriminator.pth",mini)
+
         if cur_step % 500 == 0 and cur_step > 0:
             print(f"Epoch {epoch}, step {cur_step}: Generator loss: {mean_generator_loss}, discriminator loss: {mean_discriminator_loss}")
             fake_noise = get_noise(b, noise_dim, device=device)
             fake = gen(fake_noise)
-            img_grid_fake = torchvision.utils.make_grid(fake, normalize=True)
-            img_grid_real = torchvision.utils.make_grid(real, normalize=True)
+            img_grid_fake = get_tensor_images(fake)
+            img_grid_real = get_tensor_images(real)
 
             writer_fake.add_image(
                 "Mnist Fake Images", img_grid_fake, global_step=step
@@ -140,6 +154,3 @@ for epoch in range(n_epochs):
             mean_discriminator_loss = 0
             step += 1
         cur_step += 1
-
-torch.save(gen,"generator.pkl")
-torch.save(disc,"discriminator.pkl")

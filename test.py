@@ -35,7 +35,7 @@ class Generator(nn.Module):
     def forward(self,noise):
         return self.gen(noise)
 gen = Generator(64)
-gen.load_state_dict(torch.load("generator.pth",map_location = "cpu"))
+gen.load_state_dict(torch.load("generator.pth",map_location = "cpu")["state_dict"])
 gen.eval()
 
 fake = gen(get_noise(128,64))
