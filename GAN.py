@@ -50,7 +50,6 @@ def get_disc_loss(gen,disc,crtierion,n,z_dim,real,device):
     real_pred = disc(real)
     loss_real = criterion(real_pred,torch.ones((n,1)).to(device))
     disc_loss = (loss_fake+loss_real)/2.0
-    #### END CODE HERE ####
     return disc_loss
 
 
