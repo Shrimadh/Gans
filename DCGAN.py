@@ -19,20 +19,9 @@ def get_tensor_images(image_tensor, num_images=20, size=(1, 28, 28)):
     # plt.show()
     return image_grid
 
-def gen_block(dim1,dim2):
-    return nn.Sequential(
-        nn.Linear(dim1,dim2),
-        nn.BatchNorm1d(dim2),
-        nn.ReLU(inplace=True)
-    )
 def get_noise(n_samples,noise_dim,device="cpu"):
     return  torch.randn(n_samples,noise_dim).to(device)
 
-def dis_block(dim1,dim2):
-    return nn.Sequential(
-        nn.Linear(dim1,dim2),
-        nn.LeakyReLU(0.2)
-    )
 
 def get_gen_loss(gen,disc,criterion,n,z_dim,device):
     noise = get_noise(n,z_dim).to(device)
@@ -50,56 +39,108 @@ def get_disc_loss(gen,disc,crtierion,n,z_dim,real,device):
     real_pred = disc(real)
     loss_real = criterion(real_pred,torch.ones((n,1)).to(device))
     disc_loss = (loss_fake+loss_real)/2.0
-    #### END CODE HERE ####
     return disc_loss
 
 
 class Generator(nn.Module):
-    def __init__(self,noise_dim=10,image_dim=784,hidden_dim=128):
+    def __init__(self,noise_dim=10,image_dim=1,hidden_dim=64):
         super(Generator,self).__init__()
+        self.noise_dim = noise_dim
         self.gen = nn.Sequential(
-            gen_block(noise_dim,hidden_dim),
-            gen_block(hidden_dim,hidden_dim*2),
-            gen_block(hidden_dim*2,hidden_dim*4),
-            gen_block(hidden_dim*4,hidden_dim*8),
-            nn.Linear(hidden_dim*8,image_dim),
-            nn.Sigmoid()
+            self.make_gen_block(noise_dim, hidden_dim * 4),
+            self.make_gen_block(hidden_dim * 4, hidden_dim * 2, kernel_size=4, stride=1),
+            self.make_gen_block(hidden_dim * 2, hidden_dim),
+            self.make_gen_block(hidden_dim, image_dim, kernel_size=4, final_layer=True),
         )
+    def make_gen_block(self,input_channels,output_channels,kernel_size=3,stride=2,final_layer=False):
+        if not final_layer:
+            return nn.Sequential(
+                nn.ConvTranspose2d(input_channels,output_channels,kernel_size,stride),
+                nn.BatchNorm2d(output_channels),
+                nn.ReLU(),
+            )
+        else:
+            return nn.Sequential(
+                nn.ConvTranspose2d(input_channels,output_channels,kernel_size,stride),
+                nn.Tanh()
+            )
+    def unsqueeze_noise(self,noise):
+        return noise.view(len(noise),self.noise_dim,1,1)
+
     def forward(self,noise):
+        noise = self.unsqueeze_noise(noise)
         return self.gen(noise)
 
 class Discriminator(nn.Module):
-    def __init__(self,image_dim=784,hidden_dim=128):
+    def __init__(self,image_channel = 1,hidden_dim = 16):
         super(Discriminator,self).__init__()
         self.dis = nn.Sequential(
-            dis_block(image_dim,hidden_dim*4),
-            dis_block(hidden_dim*4,hidden_dim*2),
-            dis_block(hidden_dim*2,hidden_dim),
-            nn.Linear(hidden_dim,1)
+            self.disc_block(image_channel, hidden_dim),
+            self.disc_block(hidden_dim, hidden_dim * 2),
+            self.disc_block(hidden_dim * 2, 1, final_layer=True),
         )
+    def disc_block(self,input_channels,output_channels,kernel_size = 4,stride = 2,final_layer = False):
+
+        if not final_layer:
+            return nn.Sequential(
+                nn.Conv2d(input_channels,output_channels,kernel_size,stride),
+                nn.BatchNorm2d(output_channels),
+                nn.LeakyReLU(0.2)
+            )
+        else:
+            return nn.Sequential(
+                nn.Conv2d(input_channels,output_channels,kernel_size,stride),
+            )
     def forward(self,gen_image):
-        return self.dis(gen_image)
+        pred = self.dis(gen_image)
+        return pred.view(len(pred),-1)
 
 # Loss function and some hyperparameters
 
 criterion = nn.BCEWithLogitsLoss()
-lr = 0.00001
+lr = 0.0002
 n_epochs = 380
 noise_dim = 64
 batch_size = 128
-mnist = datasets.MNIST(root='./data', train=False, download=True, transform=transforms.ToTensor())
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,),(0.5,))
+])
+mnist = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 dataloader = DataLoader(mnist,batch_size=batch_size,shuffle=True)
+
+beta_1 = 0.5
+beta_2 = 0.999
 
 gen = Generator(noise_dim = noise_dim).to(device)
 disc = Discriminator().to(device)
-gen_optim = optim.Adam(gen.parameters(),lr = lr)
-disc_optim = optim.Adam(disc.parameters(),lr = lr)
+gen_optim = optim.Adam(gen.parameters(),lr = lr, betas=(beta_1, beta_2))
+disc_optim = optim.Adam(disc.parameters(),lr = lr, betas=(beta_1, beta_2))
 
-writer_fake = SummaryWriter(f"runs/MNIST/fake")
-writer_real = SummaryWriter(f"runs/MNIST/real")
+def weights_init(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        torch.nn.init.normal_(m.weight, 0.0, 0.02)
+    if isinstance(m, nn.BatchNorm2d):
+        torch.nn.init.normal_(m.weight, 0.0, 0.02)
+        torch.nn.init.constant_(m.bias, 0)
+gen = gen.apply(weights_init)
+disc = disc.apply(weights_init)
+
+writer_fake = SummaryWriter(f"DCGAN/MNIST/fake")
+writer_real = SummaryWriter(f"DCGAN/MNIST/real")
 
 gen_checkpoint = {'state_dict': gen.state_dict(),'optimizer' : gen_optim.state_dict()}
 disc_checkpoint = {'state_dict': disc.state_dict(),'optimizer' : disc_optim.state_dict()}
+
+def weights_init(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        torch.nn.init.normal_(m.weight, 0.0, 0.02)
+    if isinstance(m, nn.BatchNorm2d):
+        torch.nn.init.normal_(m.weight, 0.0, 0.02)
+        torch.nn.init.constant_(m.bias, 0)
+gen = gen.apply(weights_init)
+disc = disc.apply(weights_init)
 
 def save_checkpoint(acc,checkpoint,path,mini):
     if acc < mini:
@@ -119,7 +160,6 @@ step = 0
 for epoch in range(n_epochs):
     for real,_ in tqdm(dataloader):
         b = len(real)
-        real = real.view(b,-1).to(device)
 
         disc.zero_grad()
         disc_loss = get_disc_loss(gen,disc,criterion,b,noise_dim,real,device)
@@ -134,8 +174,8 @@ for epoch in range(n_epochs):
         mean_discriminator_loss += disc_loss.item() / 500
         mean_generator_loss += gen_loss.item() / 500
 
-        save_checkpoint(mean_generator_loss,gen_checkpoint,"generator.pth",mini)
-        save_checkpoint(mean_generator_loss,disc_checkpoint,"discriminator.pth",mini)
+        save_checkpoint(mean_generator_loss,gen_checkpoint,"DCGANgenerator.pth",mini)
+        save_checkpoint(mean_generator_loss,disc_checkpoint,"DGGANdiscriminator.pth",mini)
 
         if cur_step % 500 == 0 and cur_step > 0:
             print(f"Epoch {epoch}, step {cur_step}: Generator loss: {mean_generator_loss}, discriminator loss: {mean_discriminator_loss}")
